@@ -1,0 +1,573 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'CloudFormation template to provision router resources: API Gateway, Lambda function, and DynamoDB table'
+
+Parameters:
+  LambdaRuntime:
+    Description: Runtime for Lambda function
+    Type: String
+    Default: python3.11
+    AllowedValues:
+      - python3.11
+  RouterHandler:
+    Description: Handler for Lambda function
+    Type: String
+    Default: sample-for-autoscaling-sagemaker-endpoints-with-custom-resource-1.router-lambda.handler
+  EndpointStateHandler:
+    Description: Handler for Endpoint State Lambda function
+    Type: String
+    Default: sample-for-autoscaling-sagemaker-endpoints-with-custom-resource-1.endpoint-state-lambda.lambda_handler
+  ScalingActivityHandler:
+    Description: Handler for Scaling Activity Lambda function
+    Type: String
+    Default: sample-for-autoscaling-sagemaker-endpoints-with-custom-resource-1.asg-activity-lambda.lambda_handler
+  DataBucket:
+    Type: String
+  DataPrefix:
+    Type: String
+    Default: "ddb-data.jsonl"
+  CodeBucket:
+    Type: String
+  CodePrefix:
+    Type: String
+    Default: "code.zip"
+  ScalingDimensionId:
+    Type: String
+    Default: "custom-resource:ResourceType:Property"
+    Description: The dimension ID for the scaling policy
+  ScalingConfigId:
+    Type: String
+    Default: "server_config"
+    Description: The scaling configuration ID as per DynamoDB table for the scaling policy
+  ScalingTarget:
+    Type: Number
+    Default: 5
+    Description: The target value for the scaling policy
+Resources:
+  # DynamoDB Table
+  DynamoDBTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub ${AWS::StackName}-Table
+      BillingMode: PROVISIONED
+      ProvisionedThroughput:
+        ReadCapacityUnits: 1
+        WriteCapacityUnits: 1
+      AttributeDefinitions:
+        - AttributeName: id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: id
+          KeyType: HASH
+      ImportSourceSpecification:
+        InputCompressionType: "NONE"
+        InputFormat: "DYNAMODB_JSON"
+        S3BucketSource:
+          S3Bucket: !Ref DataBucket
+          S3KeyPrefix: !Ref DataPrefix
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-Table
+
+  # Lambda Function Role
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: DynamoDBAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:PutItem
+                  - dynamodb:GetItem
+                  - dynamodb:UpdateItem
+                  - dynamodb:DeleteItem
+                  - dynamodb:Query
+                  - dynamodb:Scan
+                Resource: !GetAtt DynamoDBTable.Arn
+        - PolicyName: SageMakerInvokeAndUpdate
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - sagemaker:InvokeEndpointAsync
+                  - sagemaker:UpdateEndpointWeightsAndCapacities
+                Resource: !Sub arn:aws:sagemaker:${AWS::Region}:${AWS::AccountId}:endpoint/*
+
+  # Lambda Function
+  LambdaFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub ${AWS::StackName}-Function
+      Handler: !Ref RouterHandler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Runtime: !Ref LambdaRuntime
+      Timeout: 300
+      MemorySize: 128
+      Environment:
+        Variables:
+          DYNAMODB_TABLE: !Ref DynamoDBTable
+      Code:
+        S3Bucket: !Ref CodeBucket
+        S3Key: !Ref CodePrefix
+
+  # Endpoint State Lambda Function
+  EndpointStateFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub ${AWS::StackName}-EndpointStateFunction
+      Handler: !Ref EndpointStateHandler
+      Role: !GetAtt EndpointStateLambdaRole.Arn
+      Runtime: !Ref LambdaRuntime
+      Timeout: 300
+      MemorySize: 128
+      Environment:
+        Variables:
+          STATE_TABLE_NAME: !Ref DynamoDBTable
+          DIMENSION_ID: !Ref ScalingDimensionId
+          CONFIG_ID: !Ref ScalingConfigId
+      Code:
+        S3Bucket: !Ref CodeBucket
+        S3Key: !Ref CodePrefix
+        
+  # Endpoint State Lambda Role
+  EndpointStateLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: DynamoDBAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:PutItem
+                  - dynamodb:GetItem
+                  - dynamodb:UpdateItem
+                  - dynamodb:DeleteItem
+                  - dynamodb:Query
+                  - dynamodb:Scan
+                Resource: !GetAtt DynamoDBTable.Arn
+        - PolicyName: SageMakerUpdateEndpoints
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - sagemaker:InvokeEndpointAsync
+                  - sagemaker:UpdateEndpointWeightsAndCapacities
+                Resource: !Sub arn:aws:sagemaker:${AWS::Region}:${AWS::AccountId}:endpoint/*
+
+  # API Gateway
+  ApiGateway:
+    Type: AWS::ApiGateway::RestApi
+    Properties:
+      Name: !Sub ${AWS::StackName}-API
+      Description: API Gateway for Lambda function
+      ApiKeySourceType: HEADER
+      EndpointConfiguration:
+        Types:
+          - EDGE
+
+  ApiGatewayEndpointsResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref ApiGateway
+      ParentId: !GetAtt ApiGateway.RootResourceId
+      PathPart: "endpoints"
+
+  ApiGatewayEndpointNameResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref ApiGateway
+      ParentId: !Ref ApiGatewayEndpointsResource
+      PathPart: "{EndpointName+}"
+
+  ApiGatewayPostMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref ApiGateway
+      ResourceId: !Ref ApiGatewayEndpointNameResource
+      HttpMethod: POST
+      AuthorizationType: AWS_IAM
+      ApiKeyRequired: false
+      MethodResponses:
+        - StatusCode: 200
+          ResponseModels:
+            application/json: Empty
+      RequestParameters:
+        method.request.header.Accept: false
+        method.request.header.ContentType: false
+        method.request.header.CustomAttributes: false
+        method.request.header.InferenceId: false
+        method.request.header.InputLocation: true
+        method.request.header.InvocationTimeoutSeconds: false
+        method.request.header.RequestTTLSeconds: false
+        method.request.path.EndpointName: true
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${LambdaFunction.Arn}/invocations
+        PassthroughBehavior: WHEN_NO_MATCH
+        ContentHandling: CONVERT_TO_TEXT
+        TimeoutInMillis: 29000
+
+  ApiGatewayDeployment:
+    Type: AWS::ApiGateway::Deployment
+    DependsOn: 
+      - ApiGatewayPostMethod
+    Properties:
+      RestApiId: !Ref ApiGateway
+      StageName: prod
+
+  # Lambda Permission for API Gateway
+  LambdaPermissionForApiGateway:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !GetAtt LambdaFunction.Arn
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${ApiGateway}/*/POST/endpoints/*
+      
+  # EventBridge IAM Role
+  EventBridgeRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: events.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: InvokeLambdaFunction
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - lambda:InvokeFunction
+                Resource: !GetAtt EndpointStateFunction.Arn
+
+  # EventBridge Rule for SageMaker Endpoint Status Changes
+  SageMakerEndpointStatusRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: !Sub ${AWS::StackName}-EndpointStatusRule
+      Description: "Rule to detect SageMaker endpoint status changes"
+      State: ENABLED
+      EventPattern:
+        source:
+          - "aws.sagemaker"
+        detail-type:
+          - "SageMaker Endpoint State Change"
+      Targets:
+        - Arn: !GetAtt EndpointStateFunction.Arn
+          Id: "EndpointStateFunction"
+          RoleArn: !GetAtt EventBridgeRole.Arn
+      
+  # Permission for EventBridge to Invoke Lambda
+  EventBridgeLambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !GetAtt EndpointStateFunction.Arn
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt SageMakerEndpointStatusRule.Arn
+
+  ScalingActivityLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: DynamoDBAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:PutItem
+                  - dynamodb:GetItem
+                  - dynamodb:UpdateItem
+                  - dynamodb:DeleteItem
+                  - dynamodb:Query
+                  - dynamodb:Scan
+                Resource: !GetAtt DynamoDBTable.Arn
+        - PolicyName: SageMakerUpdateEndpoints
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - sagemaker:InvokeEndpointAsync
+                  - sagemaker:UpdateEndpointWeightsAndCapacities
+                Resource: !Sub arn:aws:sagemaker:${AWS::Region}:${AWS::AccountId}:endpoint/*
+
+  ScalingActivityFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub ${AWS::StackName}-ScalingActivityFunction
+      Handler: !Ref ScalingActivityHandler
+      Role: !GetAtt ScalingActivityLambdaRole.Arn
+      Runtime: !Ref LambdaRuntime
+      Timeout: 300
+      MemorySize: 128
+      Environment:
+        Variables:
+          STATE_TABLE_NAME: !Ref DynamoDBTable
+      Code:
+        S3Bucket: !Ref CodeBucket
+        S3Key: !Ref CodePrefix
+  
+  ScalingApi:
+    Type: AWS::ApiGateway::RestApi
+    Properties:
+      Name: !Sub ${AWS::StackName}-Scaling-API
+      Description: API Gateway for Scaling activities
+      ApiKeySourceType: HEADER
+      EndpointConfiguration:
+        Types:
+          - EDGE
+  
+  ScalableTargetDimensionsResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref ScalingApi
+      ParentId: !GetAtt ScalingApi.RootResourceId
+      PathPart: "scalableTargetDimensions"
+  
+  ScalableTargetDimensionIdResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref ScalingApi
+      ParentId: !Ref ScalableTargetDimensionsResource
+      PathPart: "{scalableTargetDimensionId}"
+  
+  ScalingApiGETMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref ScalingApi
+      ResourceId: !Ref ScalableTargetDimensionIdResource
+      HttpMethod: GET
+      AuthorizationType: AWS_IAM
+      ApiKeyRequired: false
+      RequestParameters:
+        method.request.path.scalableTargetDimensionId: true
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${ScalingActivityFunction.Arn}/invocations
+        PassthroughBehavior: WHEN_NO_MATCH
+        ContentHandling: CONVERT_TO_TEXT
+        TimeoutInMillis: 29000
+        RequestParameters:
+          integration.request.path.scalableTargetDimensionId: method.request.path.scalableTargetDimensionId
+        IntegrationResponses:
+          - StatusCode: 200
+            ResponseTemplates:
+              application/json: Empty
+    
+  ScalingApiPATCHMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref ScalingApi
+      ResourceId: !Ref ScalableTargetDimensionIdResource
+      HttpMethod: PATCH
+      AuthorizationType: AWS_IAM
+      ApiKeyRequired: false
+      RequestParameters:
+        method.request.path.scalableTargetDimensionId: true
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${ScalingActivityFunction.Arn}/invocations
+        PassthroughBehavior: WHEN_NO_MATCH
+        ContentHandling: CONVERT_TO_TEXT
+        TimeoutInMillis: 29000
+        RequestParameters:
+          integration.request.path.scalableTargetDimensionId: method.request.path.scalableTargetDimensionId
+        IntegrationResponses:
+          - StatusCode: 200
+            ResponseTemplates:
+              application/json: Empty
+  
+  ScalingApiDeployment:
+    Type: AWS::ApiGateway::Deployment
+    DependsOn: 
+      - ScalingApiPATCHMethod
+      - ScalingApiGETMethod
+    Properties:
+      RestApiId: !Ref ScalingApi
+      StageName: prod
+
+  # Lambda Permission for API Gateway
+  LambdaPermissionForSaclingApiGET:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !GetAtt ScalingActivityFunction.Arn
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${ScalingApi}/*/GET/scalableTargetDimensions/*
+  
+  LambdaPermissionForSaclingApiPATCH:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !GetAtt ScalingActivityFunction.Arn
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${ScalingApi}/*/PATCH/scalableTargetDimensions/*
+  
+  # ApplicationAutoScalingRole:
+  #   Type: AWS::IAM::Role
+  #   Properties:
+  #     AssumeRolePolicyDocument:
+  #       Version: '2012-10-17'
+  #       Statement:
+  #         - Effect: Allow
+  #           Principal:
+  #             Service: application-autoscaling.amazonaws.com
+  #           Action: sts:AssumeRole
+  #     Policies:
+  #       - PolicyName: ApplicationAutoScalingPolicy
+  #         PolicyDocument:
+  #           Version: '2012-10-17'
+  #           Statement:
+  #             - Effect: Allow
+  #               Action:
+  #                 - execute-api:Invoke
+  #                 - cloudwatch:DescribeAlarms
+  #                 - cloudwatch:PutMetricAlarm
+  #                 - cloudwatch:DeleteAlarms
+  #               Resource: "*"
+
+  ApplicationAutoScaling:
+    Type: "AWS::ApplicationAutoScaling::ScalableTarget"
+    DependsOn:
+      - ScalingApiGETMethod
+      - ScalingApiPATCHMethod
+      - LambdaPermissionForSaclingApiGET
+      - LambdaPermissionForSaclingApiPATCH
+      - ScalingActivityFunction
+      - ScalingApiDeployment
+    Properties:
+      #RoleARN: !GetAtt ApplicationAutoScalingRole.Arn
+      MaxCapacity: 10
+      MinCapacity: 0
+      ResourceId: !Sub |-
+        https://${ScalingApi}.execute-api.${AWS::Region}.amazonaws.com/prod/scalableTargetDimensions/${ScalingDimensionId}
+      ScalableDimension: !Ref ScalingDimensionId
+      ServiceNamespace: "custom-resource"
+  
+  ApplicationAutoScalingPolicy:
+    Type: "AWS::ApplicationAutoScaling::ScalingPolicy"
+    Properties:
+      PolicyName: !Sub ${AWS::StackName}-ScalingPolicy
+      PolicyType: TargetTrackingScaling
+      ScalingTargetId: !Ref ApplicationAutoScaling
+      TargetTrackingScalingPolicyConfiguration:
+        TargetValue: !Ref ScalingTarget
+        CustomizedMetricSpecification:
+          Metrics:
+            - Label: Get endpoint-1's ApproximateBacklogSizePerInstance
+              Id: m1
+              MetricStat:
+                Metric:
+                  MetricName: ApproximateBacklogSizePerInstance
+                  Namespace: AWS/SageMaker
+                  Dimensions:
+                    - Name: EndpointName
+                      Value: endpoint-1
+                Stat: Average
+              ReturnData: false
+            - Label: Get endpoint-2's ApproximateBacklogSizePerInstance
+              Id: m2
+              MetricStat:
+                Metric:
+                  MetricName: ApproximateBacklogSizePerInstance
+                  Namespace: AWS/SageMaker
+                  Dimensions:
+                    - Name: EndpointName
+                      Value: endpoint-2
+                Stat: Average
+              ReturnData: false
+            - Label: Get endpoint-3's ApproximateBacklogSizePerInstance
+              Id: m3
+              MetricStat:
+                Metric:
+                  MetricName: ApproximateBacklogSizePerInstance
+                  Namespace: AWS/SageMaker
+                  Dimensions:
+                    - Name: EndpointName
+                      Value: endpoint-3
+                Stat: Average
+              ReturnData: false
+            - Label: Calculate the backlog per instance
+              Id: e1
+              Expression: MAX(METRICS())
+              ReturnData: true
+
+Outputs:
+  DynamoDBTable:
+    Description: DynamoDB Table Name
+    Value: !Ref DynamoDBTable
+    Export:
+      Name: !Sub ${AWS::StackName}-DynamoDBTable
+
+  DynamoDBTableArn:
+    Description: DynamoDB Table ARN
+    Value: !GetAtt DynamoDBTable.Arn
+    Export:
+      Name: !Sub ${AWS::StackName}-DynamoDBTableArn
+
+  LambdaFunction:
+    Description: Lambda Function ARN
+    Value: !GetAtt LambdaFunction.Arn
+    Export:
+      Name: !Sub ${AWS::StackName}-LambdaFunctionArn
+
+  EndpointStateFunction:
+    Description: Endpoint State Lambda Function ARN
+    Value: !GetAtt EndpointStateFunction.Arn
+    Export:
+      Name: !Sub ${AWS::StackName}-EndpointStateFunctionArn
+      
+  EventBridgeRuleArn:
+    Description: EventBridge Rule ARN
+    Value: !GetAtt SageMakerEndpointStatusRule.Arn
+    Export:
+      Name: !Sub ${AWS::StackName}-EventBridgeRuleArn
+
+  ApiGatewayEndpoint:
+    Description: API Gateway Endpoint
+    Value: !Sub https://${ApiGateway}.execute-api.${AWS::Region}.amazonaws.com/prod/endpoints/
+    Export:
+      Name: !Sub ${AWS::StackName}-ApiGatewayEndpoint

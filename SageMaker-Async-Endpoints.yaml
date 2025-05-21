@@ -1,0 +1,286 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'CloudFormation template to create 3 Async SageMaker endpoints using the same model with different instance types. Each endpoint uses a different instance type but shares the same underlying model. The endpoint name is passed as an environment variable to the model.'
+
+Parameters:
+  # Container Image
+  ECRImageUri:
+    Type: String
+    Description: URI of the ECR image to use for the SageMaker model
+    AllowedPattern: '^[0-9]{12}\.dkr\.ecr\.[a-z0-9-]+\.amazonaws\.com\/[a-zA-Z0-9\-\_\/]+:[a-zA-Z0-9\-\_\.]+$'
+    ConstraintDescription: Must be a valid ECR image URI (e.g., 123456789012.dkr.ecr.us-west-2.amazonaws.com/my-repo:latest)
+
+  Endpoint1Name:
+    Type: String
+    Description: Name for the first SageMaker endpoint
+    Default: endpoint-1
+
+  Endpoint2Name:
+    Type: String
+    Description: Name for the second SageMaker endpoint
+    Default: endpoint-2
+
+  Endpoint3Name:
+    Type: String
+    Description: Name for the third SageMaker endpoint
+    Default: endpoint-3
+
+  InstanceType1:
+    Type: String
+    Description: Instance type for the first endpoint
+    Default: ml.m5.large
+    AllowedValues:
+      - ml.t2.medium
+      - ml.t2.large
+      - ml.m4.xlarge
+      - ml.m5.large
+      - ml.m5.xlarge
+      - ml.m5.2xlarge
+      - ml.c5.large
+      - ml.c5.xlarge
+      - ml.c5.2xlarge
+
+  InstanceType2:
+    Type: String
+    Description: Instance type for the second endpoint
+    Default: ml.c5.xlarge
+    AllowedValues:
+      - ml.t2.medium
+      - ml.t2.large
+      - ml.m4.xlarge
+      - ml.m5.large
+      - ml.m5.xlarge
+      - ml.m5.2xlarge
+      - ml.c5.large
+      - ml.c5.xlarge
+      - ml.c5.2xlarge
+
+  InstanceType3:
+    Type: String
+    Description: Instance type for the third endpoint
+    Default: ml.m5.2xlarge
+    AllowedValues:
+      - ml.t2.medium
+      - ml.t2.large
+      - ml.m4.xlarge
+      - ml.m5.large
+      - ml.m5.xlarge
+      - ml.m5.2xlarge
+      - ml.c5.large
+      - ml.c5.xlarge
+      - ml.c5.2xlarge
+
+  ModelName:
+    Type: String
+    Description: Name for the SageMaker model
+    Default: async-inference-model
+
+  ExecutionRoleArn:
+    Type: String
+    Description: >-
+      ARN of the IAM role for SageMaker execution. This role must have permissions for SageMaker to create models, 
+      endpoint configurations, and endpoints. It should also have access to the ECR repository containing the image 
+      and the S3 bucket for async inference output.
+
+  AsyncOutputS3Uri:
+    Type: String
+    Description: S3 URI for async inference output
+    AllowedPattern: '^s3:\/\/[a-z0-9][a-z0-9\.\-]*[a-z0-9](\/.*)?$'
+    ConstraintDescription: Must be a valid S3 URI (e.g., s3://my-bucket/my-prefix/)
+    
+  # Optional Parameters
+  MaxConcurrentInvocationsPerInstance:
+    Type: Number
+    Description: Maximum number of concurrent invocations per instance
+    Default: 1
+    MinValue: 1
+    MaxValue: 1000
+    
+  InitialInstanceCount:
+    Type: Number
+    Description: Initial number of instances for each endpoint
+    Default: 1
+    MinValue: 1
+    MaxValue: 10
+
+Resources:
+  # SageMaker Model
+  SageMakerModel1:
+    Type: AWS::SageMaker::Model
+    Properties:
+      ModelName: !Sub ${ModelName}-1
+      ExecutionRoleArn: !Ref ExecutionRoleArn
+      PrimaryContainer:
+        Image: !Ref ECRImageUri
+        Mode: SingleModel
+        Environment:
+          # Pass the endpoint name as an environment variable to the container
+          ENDPOINT_NAME: !Ref Endpoint1Name
+
+  SageMakerModel2:
+    Type: AWS::SageMaker::Model
+    Properties:
+      ModelName: !Sub ${ModelName}-2
+      ExecutionRoleArn: !Ref ExecutionRoleArn
+      PrimaryContainer:
+        Image: !Ref ECRImageUri
+        Mode: SingleModel
+        Environment:
+          # Pass the endpoint name as an environment variable to the container
+          ENDPOINT_NAME: !Ref Endpoint2Name
+
+  SageMakerModel3:
+    Type: AWS::SageMaker::Model
+    Properties:
+      ModelName: !Sub ${ModelName}-3
+      ExecutionRoleArn: !Ref ExecutionRoleArn
+      PrimaryContainer:
+        Image: !Ref ECRImageUri
+        Mode: SingleModel
+        Environment:
+          # Pass the endpoint name as an environment variable to the container
+          ENDPOINT_NAME: !Ref Endpoint3Name
+
+  # Endpoint 1 Configuration - Uses InstanceType1
+  Endpoint1Config:
+    Type: AWS::SageMaker::EndpointConfig
+    Properties:
+      EndpointConfigName: !Sub ${Endpoint1Name}-config
+      ProductionVariants:
+        - VariantName: default
+          ModelName: !GetAtt SageMakerModel1.ModelName
+          InstanceType: !Ref InstanceType1
+          InitialInstanceCount: !Ref InitialInstanceCount
+          ContainerStartupHealthCheckTimeoutInSeconds: 600
+      AsyncInferenceConfig:
+        OutputConfig:
+          S3OutputPath: !Ref AsyncOutputS3Uri
+        ClientConfig:
+          MaxConcurrentInvocationsPerInstance: !Ref MaxConcurrentInvocationsPerInstance
+
+  # Endpoint 2 Configuration - Uses InstanceType2
+  Endpoint2Config:
+    Type: AWS::SageMaker::EndpointConfig
+    Properties:
+      EndpointConfigName: !Sub ${Endpoint2Name}-config
+      ProductionVariants:
+        - VariantName: default
+          ModelName: !GetAtt SageMakerModel2.ModelName
+          InstanceType: !Ref InstanceType2
+          InitialInstanceCount: !Ref InitialInstanceCount
+          ContainerStartupHealthCheckTimeoutInSeconds: 600
+      AsyncInferenceConfig:
+        OutputConfig:
+          S3OutputPath: !Ref AsyncOutputS3Uri
+        ClientConfig:
+          MaxConcurrentInvocationsPerInstance: !Ref MaxConcurrentInvocationsPerInstance
+
+  # Endpoint 3 Configuration - Uses InstanceType3
+  Endpoint3Config:
+    Type: AWS::SageMaker::EndpointConfig
+    Properties:
+      EndpointConfigName: !Sub ${Endpoint3Name}-config
+      ProductionVariants:
+        - VariantName: default
+          ModelName: !GetAtt SageMakerModel3.ModelName
+          InstanceType: !Ref InstanceType3
+          InitialInstanceCount: !Ref InitialInstanceCount
+          ContainerStartupHealthCheckTimeoutInSeconds: 600
+      AsyncInferenceConfig:
+        OutputConfig:
+          S3OutputPath: !Ref AsyncOutputS3Uri
+        ClientConfig:
+          MaxConcurrentInvocationsPerInstance: !Ref MaxConcurrentInvocationsPerInstance
+
+  # Endpoint 1
+  Endpoint1:
+    Type: AWS::SageMaker::Endpoint
+    Properties:
+      EndpointName: !Ref Endpoint1Name
+      EndpointConfigName: !GetAtt Endpoint1Config.EndpointConfigName
+
+  # Endpoint 2
+  Endpoint2:
+    Type: AWS::SageMaker::Endpoint
+    Properties:
+      EndpointName: !Ref Endpoint2Name
+      EndpointConfigName: !GetAtt Endpoint2Config.EndpointConfigName
+
+  # Endpoint 3
+  Endpoint3:
+    Type: AWS::SageMaker::Endpoint
+    Properties:
+      EndpointName: !Ref Endpoint3Name
+      EndpointConfigName: !GetAtt Endpoint3Config.EndpointConfigName
+
+Outputs:
+  Model1Name:
+    Description: "SageMaker Model Name"
+    Value: !GetAtt SageMakerModel1.ModelName
+    Export:
+      Name: !Sub "${AWS::StackName}-Model1Name"
+
+  Model1Arn:
+    Description: "SageMaker Model ARN"
+    Value: !Sub "arn:aws:sagemaker:${AWS::Region}:${AWS::AccountId}:model/${SageMakerModel1.ModelName}"
+    Export:
+      Name: !Sub "${AWS::StackName}-Model1Arn"
+
+  Model2Name:
+    Description: "SageMaker Model Name"
+    Value: !GetAtt SageMakerModel2.ModelName
+    Export:
+      Name: !Sub "${AWS::StackName}-Model2Name"
+
+  Model2Arn:
+    Description: "SageMaker Model ARN"
+    Value: !Sub "arn:aws:sagemaker:${AWS::Region}:${AWS::AccountId}:model/${SageMakerModel2.ModelName}"
+    Export:
+      Name: !Sub "${AWS::StackName}-Model2Arn"
+
+  Model3Name:
+    Description: "SageMaker Model Name"
+    Value: !GetAtt SageMakerModel3.ModelName
+    Export:
+      Name: !Sub "${AWS::StackName}-Model3Name"
+
+  Model3Arn:
+    Description: "SageMaker Model ARN"
+    Value: !Sub "arn:aws:sagemaker:${AWS::Region}:${AWS::AccountId}:model/${SageMakerModel3.ModelName}"
+    Export:
+      Name: !Sub "${AWS::StackName}-Model3Arn"
+
+  Endpoint1Name:
+    Description: "SageMaker Endpoint 1 Name"
+    Value: !Ref Endpoint1Name
+    Export:
+      Name: !Sub "${AWS::StackName}-Endpoint1Name"
+
+  Endpoint1Arn:
+    Description: "SageMaker Endpoint 1 ARN"
+    Value: !Sub "arn:aws:sagemaker:${AWS::Region}:${AWS::AccountId}:endpoint/${Endpoint1Name}"
+    Export:
+      Name: !Sub "${AWS::StackName}-Endpoint1Arn"
+
+  Endpoint2Name:
+    Description: "SageMaker Endpoint 2 Name"
+    Value: !Ref Endpoint2Name
+    Export:
+      Name: !Sub "${AWS::StackName}-Endpoint2Name"
+
+  Endpoint2Arn:
+    Description: "SageMaker Endpoint 2 ARN"
+    Value: !Sub "arn:aws:sagemaker:${AWS::Region}:${AWS::AccountId}:endpoint/${Endpoint2Name}"
+    Export:
+      Name: !Sub "${AWS::StackName}-Endpoint2Arn"
+
+  Endpoint3Name:
+    Description: "SageMaker Endpoint 3 Name"
+    Value: !Ref Endpoint3Name
+    Export:
+      Name: !Sub "${AWS::StackName}-Endpoint3Name"
+
+  Endpoint3Arn:
+    Description: "SageMaker Endpoint 3 ARN"
+    Value: !Sub "arn:aws:sagemaker:${AWS::Region}:${AWS::AccountId}:endpoint/${Endpoint3Name}"
+    Export:
+      Name: !Sub "${AWS::StackName}-Endpoint3Arn"
