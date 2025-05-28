@@ -26,7 +26,7 @@ Use the below CloudFormation templates to deply a working sample
 <br>***IMPORTANT:***<br>If you are using your own SageMaker endpoint, make sure to name the endpoints in the following convention:<br>
 `<endpoint-name>-<endpoint-name-extension 1>, <endpoint-name>-<endpoint-name-extension 2>, <endpoint-name>-<endpoint-name-extension 2>`.<br>Example: `endpoint-1, endpoint-2, endpoint-3`.
 2. [Deploy the solution](CFN-template.yaml) (CFN-template.yaml): Before deploying this template, please ensure to do the below steps.<br>
-    a. Download the zipped code from the latest [release](sample-for-autoscaling-sagemaker-endpoints-with-custom-resource).<br>
+    a. Download the zipped code from the latest [release](https://github.com/aws-samples/sample-for-autoscaling-sagemaker-endpoints-with-custom-resource/archive/refs/tags/v1.0.0.zip).<br>
     b. Upload the zipped code to Amazon S3 and rename the file to `code.zip`.<br>
     c. Modify the [Autoscaling metadata store data](Data/ddb-data.jsonl) to update `server_config` record with your current endpoint name extensions. For example, if your endpoints are `endpoint-1, endpoint-2, endpoint-3`, use `1, 2, 3` as value for `servers`. Also make sure to update `current_instance_count` to reflect the actual currrent instance count. Finally, update `custom-resource:ResourceType:Property` record to reflect `actualCapacity`, `resourceName` (use `endpoint` if your endpoints name starts with `endpoint`) and `variantName`. You do not have to change anything if you are using [Deploy SageMaker AI Endpoints](SageMaker-Async-Endpoints.yaml) CloudFormation template with its default values.
 
