@@ -29,6 +29,7 @@ Use the below CloudFormation templates to deply a working sample
     a. Download the zipped code from the latest [release](https://github.com/aws-samples/sample-for-autoscaling-sagemaker-endpoints-with-custom-resource/archive/refs/tags/1.zip).<br>
     b. Upload the zipped code to Amazon S3 and rename the file to `code.zip`.<br>
     c. Modify the [Autoscaling metadata store data](Data/ddb-data.jsonl) to update `server_config` record with your current endpoint name extensions. For example, if your endpoints are `endpoint-1, endpoint-2, endpoint-3`, use `1, 2, 3` as value for `servers`. Also make sure to update `current_instance_count` to reflect the actual currrent instance count. Finally, update `custom-resource:ResourceType:Property` record to reflect `actualCapacity`, `resourceName` (use `endpoint` if your endpoints name starts with `endpoint`) and `variantName`. You do not have to change anything if you are using [Deploy SageMaker AI Endpoints](SageMaker-Async-Endpoints.yaml) CloudFormation template with its default values.
+   d. Upload the modified metadata store data from step c to Amazon S3 and note the bucket and prefix for this upload.
 
 ## Testing the solution
 Upload [payload.csv](SageMaker_container/payload.csv) to S3 before you can test this solution
