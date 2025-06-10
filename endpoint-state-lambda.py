@@ -25,7 +25,7 @@ class ASGClass:
         self.dynamodb = boto3.resource('dynamodb')
         self.sagemaker = boto3.client('sagemaker')
         self.dimensionId = os.environ.get('DIMENSION_ID', 'custom-resource:ResourceType:Property')
-        self.table = self.dynamodb.Table(os.environ.get('STATE_TABLE_NAME', 'EMLStack-Table'))
+        self.table = self.dynamodb.Table(os.environ.get('STATE_TABLE_NAME'))
         self.config_id = os.environ.get('CONFIG_ID', 'server_config')
         self.config = None
         self.currentState = {}
