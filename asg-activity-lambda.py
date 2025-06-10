@@ -74,6 +74,7 @@ class ASGClass:
             # add modified timestamp
             self.currentState['lastModified'] = int(Decimal(time.time()) * 1000)
             self.table.put_item(Item=self.currentState)
+            logger.info(f"State updated: {self.currentState}")
             return True
         except Exception as e:
             logger.error(f"Error writing state for {self.dimensionId}: {str(e)}")
@@ -181,6 +182,7 @@ class ASGClass:
 def lambda_handler(event, context):
     """Main Lambda handler function"""
     try:
+        logger.info(f"Recieved event: {event}")
 
         # Initialize ASGClass
         asg = ASGClass()
@@ -202,6 +204,7 @@ def lambda_handler(event, context):
         
         # Read current state
         asg.currentState = asg.read_state()
+        logger.info(f"Current state: {asg.currentState}")
         asg.previousState = dict(asg.currentState)
         asg.dimensionId = asg.currentState["scalableTargetDimensionId"]
         
