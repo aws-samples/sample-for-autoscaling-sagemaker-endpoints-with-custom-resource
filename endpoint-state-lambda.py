@@ -127,6 +127,7 @@ def handle_endpoint_status_change(event):
         asg = ASGClass()
         asg.get_server_config()
         asg.currentState = asg.read_state()
+        logger.info(f"Current state: {asg.currentState}")
         detail = event.get('detail', {})
         endpoint_name = detail.get('EndpointName')
         endpoint_status = detail.get('EndpointStatus')
