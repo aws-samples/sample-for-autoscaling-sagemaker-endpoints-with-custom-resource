@@ -219,15 +219,16 @@ def lambda_handler(event, context):
             }
         else:
             if asg.currentState["desiredCapacity"] >= 0:
-                if (asg.currentState["scalingStatus"] == "Successful" or asg.currentState["scalingStatus"] == "Failed") and asg.currentState["desiredCapacity"] != asg.currentState["actualCapacity"]:
-                    asg.currentState["scalingStatus"] = "Pending"
-                    asg.update_scaling()
                 if asg.currentState["lastModified"] < int(Decimal(time.time()) * 1000) - 25 * 60 * 1000 and (asg.currentState["scalingStatus"] == "Pending" or asg.currentState["scalingStatus"] == "InProgress"):
                     if asg.currentState["desiredCapacity"] != asg.currentState["actualCapacity"]:
                         asg.currentState["scalingStatus"] = "Failed"
                         asg.currentState["failureResaon"] = "Scaling activity stayed in Pending or InProgress for more than 25 minutes"
                     else:
                         asg.currentState["scalingStatus"] = "Successful"
+                if (asg.currentState["scalingStatus"] == "Successful" or asg.currentState["scalingStatus"] == "Failed") and asg.currentState["desiredCapacity"] != asg.currentState["actualCapacity"]:
+                    asg.currentState["scalingStatus"] = "Pending"
+                    asg.update_scaling()
+                
 
         if asg.currentState["scalingStatus"] != "Failed":
             asg.currentState["failureResaon"] = ""
