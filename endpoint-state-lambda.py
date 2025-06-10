@@ -59,33 +59,9 @@ class ASGClass:
             )
 
     def update_server_config(self):
-        try:
-            item = {
-                'id': self.config_id,
-                'servers': self.servers,
-                'weights': [Decimal(str(w)) for w in self.weights],
-                "current_instance_count": [Decimal(str(c)) for c in self.currentInstanceCount]
-            }
-            
-            self.table.put_item(Item=item)
-            
-        except ClientError as e:
-            logger.error(f"DynamoDB error updating server config: {str(e)}")
-            error_code = e.response.get('Error', {}).get('Code', 'Unknown')
-            error_message = e.response.get('Error', {}).get('Message', str(e))
-            
-            raise ConfigurationError(
-                f"Failed to update configuration: {error_code}", 
-                500, 
-                {"error_code": error_code, "error_message": error_message}
-            )
-        except Exception as e:
-            logger.error(f"Unexpected error updating server config: {str(e)}")
-            raise ConfigurationError(
-                "Failed to update server configuration", 
-                500, 
-                {"error": str(e)}
-            )
+        self.currentState["id"] = self.config_id
+        self.currentState["servers"] = self.servers
+        self.currentState["weights"] = [Decimal(str(c)) for c in self.currentInstanceCount]
 
     def read_state(self):
         """Read state from DynamoDB"""
@@ -106,6 +82,7 @@ class ASGClass:
             self.currentState['id'] = self.dimensionId  # Ensure dimensionId is in the state
             self.currentState['lastModified'] = int(Decimal(time.time()) * 1000)
             self.table.put_item(Item=self.currentState)
+            logger.info(f"State updated: {self.currentState}")
             return True
         except Exception as e:
             logger.error(f"Error writing state for {self.dimensionId}: {str(e)}")
