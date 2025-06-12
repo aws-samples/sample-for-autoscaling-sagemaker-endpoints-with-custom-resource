@@ -16,10 +16,15 @@ When the *Routing API Gateway* recieves invocations, it will trigger the *Routin
 
 The routing logic can be found in [router-lambda.py](router-lambda.py). You can customize this logic to modify or implement different routing logic.
 
+*⚠️ DISCLAIMER: The above logic is a sample only and is not intended for production use.*
+
 ## Scaling logic
 For Auto Scaling with Target tracking, we define a sclaing metric as the maximum value of the average **ApproximateBacklogSizePerInstance** metric for all SageMaker AI endpoints. When a scaling out activity is initiated, the *AutoScaling Activity Lambda* scales all SageMaker AI endpoints out. Once the endpoints status changes from *Updating* to *InService*, the *SageMaker Endpoints Event Lambda* would then scale in SageMaker AI endpoints to make sure the Actual instance count matches the Desired instance count.
 
 The scaling logic can be found in [asg-activity-lambda.py](asg-activity-lambda.py) and [endpoint-state-lambda.py](endpoint-state-lambda.py). You can customize this logic to modify or implement different scaling logic.
+
+*⚠️ DISCLAIMER: The above logic is a sample only and is not intended for production use.*
+
 ## How to deploy this solution:
 Use the below CloudFormation templates to deply a working sample
 1. [Deploy SageMaker AI Endpoints](SageMaker-Async-Endpoints.yaml) (Optional): This template will deploy 3 test Async endpoints in your account. You will need to first build docker image and push it to Amazon Elastic Container Registry (ECR). You can do this by pulling this git repo and running [build_and_push.sh](SageMaker_container/build_and_push.sh). Use the image ECR uri when deploying this CloudFormation template.<br>
